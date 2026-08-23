@@ -11,7 +11,7 @@ import LinkGenerated from "@/components/screens/LinkGenerated";
 import LiveRoom from "@/components/screens/LiveRoom";
 import IntegrityReport from "@/components/screens/IntegrityReport";
 import { CODE_SRC, DEFAULT_NOTE, DEFAULT_PROBLEM, DEFAULT_ROLE_TITLE, FLAGS, SCHEDULED, COMPLETED, buildFollowupQuestion, buildWindows } from "@/lib/data";
-import { buildCodeLines, fmt, isShown } from "@/lib/logic";
+import { buildCodeLines, fmt } from "@/lib/logic";
 import { publishLive } from "@/lib/liveChannel";
 import type { Decision, EditorMode, Flag, IScreen } from "@/lib/types";
 
@@ -253,9 +253,11 @@ function InterviewerApp() {
           onSendProbe={() =>
             patch((s) => {
               if (!s.openFlagId) return {};
+              const sentFlag = FLAGS.find((f) => f.id === s.openFlagId);
               publishLive({ type: "probe-sent", flagId: s.openFlagId });
-              const flagsForFollowup = FLAGS.filter((f) => isShown(f, s.threshold));
-              publishLive({ type: "followup-created", question: buildFollowupQuestion(flagsForFollowup) });
+              if (sentFlag) {
+                publishLive({ type: "followup-created", question: buildFollowupQuestion(sentFlag) });
+              }
               return { probeSentFor: s.openFlagId, followupCreated: true };
             })
           }

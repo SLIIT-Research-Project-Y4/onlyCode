@@ -96,15 +96,11 @@ export const FOLLOW_SRC = [
 
 export const FOLLOWUP_FILE_NAME = "followup1.py";
 
-// One combined follow-up, assembled from every flagged section across the
-// interview rather than just the flag the interviewer sent — sending any
-// flag to the candidate closes out the main round and opens this file.
-export function buildFollowupQuestion(flags: Flag[]): string {
-  if (flags.length === 0) return "";
-  const parts = flags.map(
-    (f, i) => `${i + 1}. Lines ${f.from}–${f.to} (${f.cls}, ${f.knowledge}) — ${f.probe}`,
-  );
-  return `Before we wrap up, here is one combined follow-up covering every flagged section from your submission:\n\n${parts.join("\n\n")}`;
+// A simple follow-up built from the single flag the interviewer sent —
+// sending any one flag to the candidate closes out the main round and
+// opens this file.
+export function buildFollowupQuestion(flag: Flag): string {
+  return `Before we wrap up, here's a quick follow-up on your submission (lines ${flag.from}–${flag.to}):\n\n${flag.probe}`;
 }
 
 export const FLAGS: Flag[] = [
