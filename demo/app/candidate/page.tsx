@@ -5,7 +5,6 @@ import Header from "@/components/Header";
 import AccountBadge from "@/components/AccountBadge";
 import RequireRole from "@/components/RequireRole";
 import CandidateJoin from "@/components/screens/CandidateJoin";
-import CandidateConsent from "@/components/screens/CandidateConsent";
 import CandidateWaiting from "@/components/screens/CandidateWaiting";
 import CandidateCoding from "@/components/screens/CandidateCoding";
 import { CODE_SRC, DEFAULT_NOTE, DEFAULT_PROBLEM, FLAGS, FOLLOW_SRC, SYSTEM_CHECK } from "@/lib/data";
@@ -20,6 +19,7 @@ interface State {
   elapsedSec: number;
   tab: CodeTab;
   probeSentFor: number | null;
+  followupQuestion: string | null;
   solutionCode: string;
   followupCode: string;
   output: string;
@@ -32,6 +32,7 @@ const initialState: State = {
   elapsedSec: 0,
   tab: "solution",
   probeSentFor: null,
+  followupQuestion: null,
   solutionCode: CODE_SRC.join("\n"),
   followupCode: FOLLOW_SRC.join("\n"),
   output: "",
@@ -64,9 +65,15 @@ function CandidateApp() {
   // another tab of this same demo.
   useEffect(() => subscribeLive((msg) => {
     if (msg.type === "probe-sent") patch({ probeSentFor: msg.flagId });
+    if (msg.type === "followup-created") patch({ followupQuestion: msg.question, solutionCode: "" });
   }), []);
 
-  const probeQuestion = state.probeSentFor ? FLAGS.find((f) => f.id === state.probeSentFor)?.probe ?? "" : "";
+  const probeSent = !!state.followupQuestion || !!state.probeSentFor;
+  const probeQuestion = state.followupQuestion
+    ? state.followupQuestion
+    : state.probeSentFor
+      ? FLAGS.find((f) => f.id === state.probeSentFor)?.probe ?? ""
+      : "";
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "var(--color-bg)", color: "var(--color-text)", fontFamily: "var(--font-body)", overflow: "hidden" }}>
@@ -81,12 +88,8 @@ function CandidateApp() {
             candEmail={state.candEmail}
             setCandEmail={(v) => patch({ candEmail: v })}
             systemCheck={SYSTEM_CHECK}
-            onJoin={() => patch({ cScreen: "consent" })}
+            onJoin={() => patch({ cScreen: "wait" })}
           />
-        )}
-
-        {state.cScreen === "consent" && (
-          <CandidateConsent onAgree={() => patch({ cScreen: "wait" })} onDecline={() => patch({ cScreen: "join" })} />
         )}
 
         {state.cScreen === "wait" && (
@@ -97,7 +100,7 @@ function CandidateApp() {
           <CandidateCoding
             problem={DEFAULT_PROBLEM}
             note={DEFAULT_NOTE}
-            probeSent={!!state.probeSentFor}
+            probeSent={probeSent}
             probeQuestion={probeQuestion}
             onOpenFollow={() => patch({ tab: "followup" })}
             tab={state.tab}

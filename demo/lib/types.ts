@@ -2,7 +2,7 @@ export type FlagClass = "no_ai" | "ide_ai" | "external_ai";
 
 export type Role = "interviewer" | "candidate";
 export type IScreen = "list" | "create" | "link" | "live" | "report";
-export type CScreen = "join" | "consent" | "wait" | "code";
+export type CScreen = "join" | "wait" | "code";
 export type CodeTab = "solution" | "followup";
 
 export interface Contribution {
@@ -45,7 +45,8 @@ export interface Flag {
 export interface WindowPoint {
   i: number;
   cls: FlagClass;
-  conf: number;
+  typingFreq: number;
+  burst: boolean;
 }
 
 export interface Token {

@@ -1,9 +1,10 @@
-import { DURATIONS, EDITOR_MODES, LANGUAGES } from "@/lib/data";
-import type { EditorMode } from "@/lib/types";
+import { DURATIONS, LANGUAGES } from "@/lib/data";
 
 export default function CreateInterview({
   roleTitle,
   setRoleTitle,
+  candidateEmail,
+  setCandidateEmail,
   date,
   setDate,
   time,
@@ -16,15 +17,14 @@ export default function CreateInterview({
   setProblem,
   note,
   setNote,
-  editorMode,
-  setEditorMode,
-  threshold,
-  setThreshold,
   onSave,
+  onSendEmail,
   onCancel,
 }: {
   roleTitle: string;
   setRoleTitle: (v: string) => void;
+  candidateEmail: string;
+  setCandidateEmail: (v: string) => void;
   date: string;
   setDate: (v: string) => void;
   time: string;
@@ -37,18 +37,15 @@ export default function CreateInterview({
   setProblem: (v: string) => void;
   note: string;
   setNote: (v: string) => void;
-  editorMode: EditorMode;
-  setEditorMode: (v: EditorMode) => void;
-  threshold: number;
-  setThreshold: (v: number) => void;
   onSave: () => void;
+  onSendEmail: () => void;
   onCancel: () => void;
 }) {
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: "34px 28px 60px" }}>
       <h2 style={{ margin: 0 }}>New interview</h2>
       <p className="text-muted" style={{ maxWidth: "52ch" }}>
-        The editor mode and the flag threshold decide what the model treats as suspicious. Everything else is scheduling.
+        Scheduling details and what the candidate will see during the interview.
       </p>
       <hr className="hr" />
 
@@ -56,6 +53,16 @@ export default function CreateInterview({
         <div className="field" style={{ gridColumn: "1 / -1" }}>
           <label>Role / title</label>
           <input className="input" value={roleTitle} onChange={(e) => setRoleTitle(e.target.value)} />
+        </div>
+        <div className="field" style={{ gridColumn: "1 / -1" }}>
+          <label>Candidate email</label>
+          <input
+            className="input"
+            type="email"
+            placeholder="candidate@example.com"
+            value={candidateEmail}
+            onChange={(e) => setCandidateEmail(e.target.value)}
+          />
         </div>
         <div className="field">
           <label>Date</label>
@@ -101,58 +108,9 @@ export default function CreateInterview({
       </div>
 
       <hr className="hr" />
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-        <div>
-          <div style={{ fontSize: 12, color: "color-mix(in srgb, var(--color-text) 70%, transparent)", marginBottom: 8 }}>
-            Editor mode
-          </div>
-          {EDITOR_MODES.map((m) => (
-            <button
-              key={m.value}
-              onClick={() => setEditorMode(m.value)}
-              style={{
-                textAlign: "left",
-                display: "block",
-                width: "100%",
-                marginBottom: 8,
-                padding: "12px 14px",
-                border: "1px solid var(--color-divider)",
-                cursor: "pointer",
-                background: editorMode === m.value ? "var(--color-text)" : "transparent",
-                color: editorMode === m.value ? "var(--color-bg)" : "var(--color-text)",
-              }}
-            >
-              <div className="mono" style={{ fontSize: 13 }}>{m.label}</div>
-              <div style={{ fontSize: 12, marginTop: 4, lineHeight: 1.4, opacity: 0.8 }}>{m.help}</div>
-            </button>
-          ))}
-        </div>
-        <div>
-          <div style={{ fontSize: 12, color: "color-mix(in srgb, var(--color-text) 70%, transparent)", marginBottom: 8 }}>
-            Flag threshold
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <input
-              type="range"
-              min={0.4}
-              max={0.9}
-              step={0.01}
-              value={threshold}
-              onChange={(e) => setThreshold(Number(e.target.value))}
-              style={{ flex: 1 }}
-            />
-            <span className="mono" style={{ fontSize: 22 }}>{threshold.toFixed(2)}</span>
-          </div>
-          <div style={{ fontSize: 12, marginTop: 8, color: "color-mix(in srgb, var(--color-text) 65%, transparent)", lineHeight: 1.45 }}>
-            Higher means fewer flags to review, but borderline moments may be missed. Nothing is ever auto-rejected — flags are evidence for you to read.
-          </div>
-        </div>
-      </div>
-
-      <hr className="hr" />
       <div style={{ display: "flex", gap: 10 }}>
         <button className="btn btn-primary" onClick={onSave}>Save and generate link</button>
+        <button className="btn btn-secondary" onClick={onSendEmail}>Send link to email</button>
         <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
     </div>

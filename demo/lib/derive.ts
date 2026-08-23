@@ -1,5 +1,6 @@
 import { clsColor, clsInk, clsTagBg, fmt, isPermitted, isShown } from "./logic";
-import type { EditorMode, Flag, WindowPoint } from "./types";
+import { FOLLOWUP_FILE_NAME } from "./data";
+import type { EditorMode, Flag, FlagClass, WindowPoint } from "./types";
 
 export interface CellVM {
   key: number;
@@ -9,29 +10,48 @@ export interface CellVM {
   onClick?: () => void;
 }
 
-export function cellsFor(
-  windows: WindowPoint[],
-  threshold: number,
-  nowIdx: number,
-  onScrubTo?: (sec: number) => void,
-): CellVM[] {
+export function cellsFor(windows: WindowPoint[], nowIdx: number, onScrubTo?: (sec: number) => void): CellVM[] {
   return windows.map((w) => {
     const past = w.i <= nowIdx;
-    const h = 12 + Math.round(w.conf * 34);
-    const flagged = w.cls === "ide_ai" ? true : w.conf >= threshold;
+    const h = 12 + Math.round(w.typingFreq * 60);
     const bg = !past
       ? "color-mix(in srgb, var(--color-text) 7%, transparent)"
-      : flagged
+      : w.burst
         ? clsColor(w.cls)
-        : `color-mix(in srgb, var(--color-text) ${Math.round(18 + w.conf * 90)}%, transparent)`;
+        : `color-mix(in srgb, var(--color-text) ${Math.round(14 + w.typingFreq * 70)}%, transparent)`;
     return {
       key: w.i,
       height: past ? h : 12,
       background: bg,
-      title: `${fmt(w.i * 30)} · ${w.cls} ${w.conf.toFixed(2)}`,
+      title: `${fmt(w.i * 30)} · ${w.burst ? "sudden code burst" : w.typingFreq < 0.15 ? "little to no typing" : "typing"}`,
       onClick: onScrubTo ? () => onScrubTo(w.i * 30) : undefined,
     };
   });
+}
+
+export interface ActivityLogVM {
+  key: number;
+  when: string;
+  description: string;
+  burst: boolean;
+  cls: FlagClass;
+  flag: Flag | null;
+}
+
+export function activityLogFor(windows: WindowPoint[], flags: Flag[], nowIdx: number, count: number): ActivityLogVM[] {
+  const start = Math.max(0, nowIdx - count + 1);
+  return windows
+    .slice(start, nowIdx + 1)
+    .map((w) => {
+      const flag = flags.find((f) => Math.floor(f.atSec / 30) === w.i) ?? null;
+      let description: string;
+      if (w.burst) description = flag ? flag.reason : "Sudden code burst detected";
+      else if (w.typingFreq < 0.15) description = "Long pause — little to no typing";
+      else if (w.typingFreq < 0.4) description = "Light, intermittent typing";
+      else description = "Steady typing at a normal pace";
+      return { key: w.i, when: fmt(w.i * 30), description, burst: w.burst, cls: w.cls, flag };
+    })
+    .reverse();
 }
 
 export interface MarkerVM {
@@ -95,14 +115,48 @@ export interface FlagRowVM {
 
 export function flagRowInfo(
   f: Flag,
-  ctx: { editorMode: EditorMode; falsePos: Record<number, string>; dismissed: Record<number, true>; probeSentFor: number | null },
+  ctx: {
+    editorMode: EditorMode;
+    falsePos: Record<number, string>;
+    dismissed: Record<number, true>;
+    probeSentFor: number | null;
+    followupCreated?: boolean;
+  },
 ): FlagRowVM {
   let outcome = "";
   if (ctx.falsePos[f.id]) outcome = "marked false positive · " + (ctx.falsePos[f.id] || "no reason given");
   else if (ctx.dismissed[f.id]) outcome = "dismissed by interviewer";
   else if (ctx.probeSentFor === f.id) outcome = "probe 1 sent · awaiting response · re-check pending";
   else if (isPermitted(f, ctx.editorMode)) outcome = "editor autocomplete was allowed for this round · expected, not a concern";
+  else if (ctx.followupCreated) outcome = "included in end-of-interview follow-up";
   return { flag: f, clsBg: clsTagBg(f.cls), clsInk: clsInk(f.cls), outcome };
+}
+
+export interface FileEntryVM {
+  key: string;
+  name: string;
+  detail: string;
+  isNew: boolean;
+}
+
+export function filesFor(followupCreated: boolean): FileEntryVM[] {
+  const files: FileEntryVM[] = [
+    {
+      key: "solution",
+      name: "solution.py",
+      detail: followupCreated ? "cleared · main round submitted" : "candidate editing",
+      isNew: false,
+    },
+  ];
+  if (followupCreated) {
+    files.push({
+      key: "followup1",
+      name: FOLLOWUP_FILE_NAME,
+      detail: "created · follow-up round in progress",
+      isNew: true,
+    });
+  }
+  return files;
 }
 
 export function visibleFlags(flagsAll: Flag[], t: number): Flag[] {

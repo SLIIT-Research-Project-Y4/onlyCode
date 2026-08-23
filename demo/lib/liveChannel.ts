@@ -1,6 +1,8 @@
 // Same-browser interviewer <-> candidate sync for the demo, standing in for
 // the real backend. Only works across tabs open on the same machine.
-export type LiveMessage = { type: "probe-sent"; flagId: number };
+export type LiveMessage =
+  | { type: "probe-sent"; flagId: number }
+  | { type: "followup-created"; question: string };
 
 const CHANNEL_NAME = "integrai-demo";
 

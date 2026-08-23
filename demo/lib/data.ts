@@ -94,6 +94,19 @@ export const FOLLOW_SRC = [
   "",
 ];
 
+export const FOLLOWUP_FILE_NAME = "followup1.py";
+
+// One combined follow-up, assembled from every flagged section across the
+// interview rather than just the flag the interviewer sent — sending any
+// flag to the candidate closes out the main round and opens this file.
+export function buildFollowupQuestion(flags: Flag[]): string {
+  if (flags.length === 0) return "";
+  const parts = flags.map(
+    (f, i) => `${i + 1}. Lines ${f.from}–${f.to} (${f.cls}, ${f.knowledge}) — ${f.probe}`,
+  );
+  return `Before we wrap up, here is one combined follow-up covering every flagged section from your submission:\n\n${parts.join("\n\n")}`;
+}
+
 export const FLAGS: Flag[] = [
   {
     id: 1,
@@ -200,7 +213,7 @@ export const FLAGS: Flag[] = [
   },
 ];
 
-// Deterministic LCG so the confidence timeline is stable across renders/reloads.
+// Deterministic LCG so the timeline is stable across renders/reloads.
 export function buildWindows(): WindowPoint[] {
   let seed = 20260815;
   const rnd = () => {
@@ -209,19 +222,25 @@ export function buildWindows(): WindowPoint[] {
   };
   const win: WindowPoint[] = [];
   for (let i = 0; i < 90; i++) {
-    win.push({ i, cls: "no_ai", conf: Math.round((0.05 + rnd() * 0.15) * 100) / 100 });
+    win.push({ i, cls: "no_ai", typingFreq: Math.round((0.4 + rnd() * 0.35) * 100) / 100, burst: false });
   }
-  const set = (i: number, cls: WindowPoint["cls"], conf: number) => {
-    win[i] = { i, cls, conf };
+  const quiet = (i: number, freq: number) => {
+    win[i] = { i, cls: "no_ai", typingFreq: freq, burst: false };
   };
-  set(4, "external_ai", 0.84);
-  set(5, "external_ai", 0.77);
-  set(6, "external_ai", 0.52);
-  set(15, "ide_ai", 0.61);
-  set(16, "ide_ai", 0.34);
-  set(22, "external_ai", 0.71);
-  set(23, "external_ai", 0.58);
-  set(36, "no_ai", 0.11);
+  const burst = (i: number, cls: WindowPoint["cls"], freq: number) => {
+    win[i] = { i, cls, typingFreq: freq, burst: true };
+  };
+  // Windows are 30 s wide; indices here line up with FLAGS[*].atSec so the
+  // activity log can attach the real flag reason to the right window.
+  quiet(3, 0.15);
+  burst(4, "external_ai", 0.05); // 02:21 flag — 18.2 s unfocused, then a paste
+  quiet(5, 0.22);
+  burst(15, "ide_ai", 0.24); // 07:34 flag — short pause, one Tab, small chunk
+  quiet(21, 0.1);
+  burst(22, "external_ai", 0.07); // 11:02 flag — 8.4 s pause, then a paste
+  // An ordinary lull with nothing suspicious after it — not every quiet
+  // stretch is a burst.
+  quiet(36, 0.09);
   return win;
 }
 
@@ -245,10 +264,6 @@ export const SYSTEM_CHECK: SystemCheckItem[] = [
 
 export const DURATIONS = ["30", "45", "60", "90"];
 export const LANGUAGES = ["Python"];
-export const EDITOR_MODES: { value: "off" | "allowed"; label: string; help: string }[] = [
-  { value: "off", label: "Autocomplete off", help: "The strict setting. Any completion is suspicious and will be flagged as ide_ai." },
-  { value: "allowed", label: "Autocomplete allowed", help: "The editor's own suggestions are permitted, so ide_ai is expected rather than flagged." },
-];
 export const DECISIONS: Array<"Proceed" | "Do not proceed" | "Needs another round"> = [
   "Proceed",
   "Do not proceed",

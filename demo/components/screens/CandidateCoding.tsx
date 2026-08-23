@@ -1,4 +1,5 @@
 import CodeEditor from "../CodeEditor";
+import { FOLLOWUP_FILE_NAME } from "@/lib/data";
 import type { CodeTab } from "@/lib/types";
 
 export default function CandidateCoding({
@@ -39,7 +40,7 @@ export default function CandidateCoding({
   onSubmitFollowup: () => void;
 }) {
   const tabs: { value: CodeTab; label: string }[] = probeSent
-    ? [{ value: "solution", label: "solution.py" }, { value: "followup", label: "followup.py" }]
+    ? [{ value: "solution", label: "solution.py" }, { value: "followup", label: FOLLOWUP_FILE_NAME }]
     : [{ value: "solution", label: "solution.py" }];
 
   return (
@@ -115,7 +116,7 @@ export default function CandidateCoding({
               </>
             ) : (
               <>
-                <span className="mono" style={{ fontSize: 11, color: "var(--color-neutral-500)" }}>python followup.py</span>
+                <span className="mono" style={{ fontSize: 11, color: "var(--color-neutral-500)" }}>python {FOLLOWUP_FILE_NAME}</span>
                 <button className="btn btn-primary" style={{ marginLeft: "auto", padding: "4px 14px", fontSize: 12 }} onClick={onSubmitFollowup}>
                   Submit follow-up
                 </button>

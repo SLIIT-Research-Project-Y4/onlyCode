@@ -2,7 +2,7 @@ import CodeLines from "../CodeLines";
 import { cellsFor, flagRowInfo } from "@/lib/derive";
 import { clsColor, isShown } from "@/lib/logic";
 import type { CodeLineView, Decision, EditorMode, Flag, WindowPoint } from "@/lib/types";
-import { DECISIONS } from "@/lib/data";
+import { DECISIONS, FOLLOWUP_FILE_NAME } from "@/lib/data";
 
 export default function IntegrityReport({
   roleTitle,
@@ -13,6 +13,7 @@ export default function IntegrityReport({
   falsePos,
   dismissed,
   probeSentFor,
+  followupCreated,
   mirrorLines,
   onLineClick,
   notes,
@@ -29,6 +30,7 @@ export default function IntegrityReport({
   falsePos: Record<number, string>;
   dismissed: Record<number, true>;
   probeSentFor: number | null;
+  followupCreated: boolean;
   mirrorLines: CodeLineView[];
   onLineClick: (f: Flag) => void;
   notes: string;
@@ -39,11 +41,12 @@ export default function IntegrityReport({
 }) {
   const flagsAll = flags.filter((f) => isShown(f, threshold));
   const concerns = flagsAll.filter((f) => !(f.cls === "ide_ai" && editorMode === "allowed"));
-  const reportCells = cellsFor(windows, threshold, 89);
+  const reportCells = cellsFor(windows, 89);
   const stats = [
     { label: "Overall split", value: "70 / 8 / 22" },
     { label: "Flags", value: `${flagsAll.length} (${concerns.length} to review)` },
     { label: "Probes sent", value: probeSentFor ? "1" : "0" },
+    { label: "Follow-up", value: followupCreated ? `sent · ${FOLLOWUP_FILE_NAME}` : "not sent" },
     { label: "Events captured", value: "10,231" },
   ];
   const decisionText = decision ? `recorded by interviewer · ${decision.toLowerCase()}` : "";
@@ -57,7 +60,7 @@ export default function IntegrityReport({
           </div>
           <h2 style={{ margin: "4px 0 0" }}>{roleTitle}</h2>
           <div className="mono" style={{ fontSize: 13, marginTop: 6, color: "color-mix(in srgb, var(--color-text) 65%, transparent)" }}>
-            15 Aug 2026 · 45:00 · candidate C-4471 · Python · autocomplete allowed · threshold {threshold.toFixed(2)}
+            15 Aug 2026 · 45:00 · candidate C-4471 · Python · autocomplete allowed
           </div>
         </div>
         <button className="btn btn-secondary" style={{ marginLeft: "auto" }} onClick={() => window.print()}>
@@ -66,7 +69,7 @@ export default function IntegrityReport({
       </div>
       <hr className="hr" />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "var(--color-divider)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 1, background: "var(--color-divider)" }}>
         {stats.map((s) => (
           <div key={s.label} style={{ background: "var(--color-bg)", padding: "12px 14px" }}>
             <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "color-mix(in srgb, var(--color-text) 55%, transparent)" }}>
@@ -95,7 +98,7 @@ export default function IntegrityReport({
           <div className="eyebrow" style={{ marginBottom: 8 }}>Flags and outcomes</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             {flagsAll.map((f) => {
-              const info = flagRowInfo(f, { editorMode, falsePos, dismissed, probeSentFor });
+              const info = flagRowInfo(f, { editorMode, falsePos, dismissed, probeSentFor, followupCreated });
               return (
                 <button
                   key={f.id}

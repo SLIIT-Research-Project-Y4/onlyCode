@@ -27,7 +27,6 @@ export default function FlagModal({
   fpReason,
   onClose,
   onSendProbe,
-  onEditProbe,
   onDismiss,
   onMarkFP,
   onSaveFP,
@@ -195,7 +194,6 @@ export default function FlagModal({
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
                 <button className="btn btn-primary" onClick={onSendProbe}>Send to candidate</button>
-                <button className="btn btn-secondary" onClick={onEditProbe}>Edit first</button>
                 <button className="btn btn-secondary" onClick={onDismiss}>Dismiss flag</button>
                 <button className="btn btn-ghost" onClick={onMarkFP}>Mark as false positive</button>
               </div>

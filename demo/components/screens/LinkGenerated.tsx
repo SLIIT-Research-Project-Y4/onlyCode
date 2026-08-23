@@ -2,6 +2,8 @@ export default function LinkGenerated({
   roleTitle,
   note,
   copied,
+  candidateEmail,
+  emailSent,
   onCopy,
   onRegen,
   onCopyInvite,
@@ -10,6 +12,8 @@ export default function LinkGenerated({
   roleTitle: string;
   note: string;
   copied: boolean;
+  candidateEmail: string;
+  emailSent: boolean;
   onCopy: () => void;
   onRegen: () => void;
   onCopyInvite: () => void;
@@ -51,6 +55,11 @@ export default function LinkGenerated({
             <button className="btn btn-secondary" onClick={onCopyInvite}>Copy email invite</button>
             <button className="btn btn-ghost" onClick={onOpenLive}>Open live room</button>
           </div>
+          {emailSent && (
+            <div className="mono" style={{ fontSize: 12, marginTop: 14, color: "var(--color-accent-700)" }}>
+              ✓ Link sent to {candidateEmail || "the candidate"}
+            </div>
+          )}
         </div>
         <div style={{ border: "1px solid var(--color-divider)", background: "var(--color-surface)", padding: 16 }}>
           <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-accent)", marginBottom: 10 }}>

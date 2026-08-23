@@ -1,6 +1,6 @@
 import CodeLines from "../CodeLines";
-import { breakdownFor, cellsFor, flagRowInfo, markersFor, signalsFor, visibleFlags } from "@/lib/derive";
-import { clsColor, clsTagBg, clsInk, isShown } from "@/lib/logic";
+import { breakdownFor, cellsFor, filesFor, flagRowInfo, markersFor, signalsFor, visibleFlags } from "@/lib/derive";
+import { clsColor, isShown } from "@/lib/logic";
 import type { CodeLineView, EditorMode, Flag, WindowPoint } from "@/lib/types";
 
 export default function LiveRoom({
@@ -18,6 +18,7 @@ export default function LiveRoom({
   falsePos,
   dismissed,
   probeSentFor,
+  followupCreated,
   onOpenFlag,
 }: {
   mirrorLines: CodeLineView[];
@@ -34,14 +35,15 @@ export default function LiveRoom({
   falsePos: Record<number, string>;
   dismissed: Record<number, true>;
   probeSentFor: number | null;
+  followupCreated: boolean;
   onOpenFlag: (f: Flag) => void;
 }) {
   const nowIdx = Math.min(89, Math.floor(t / 30));
-  const w = windows[nowIdx];
   const flagsAll = flags.filter((f) => isShown(f, threshold));
   const concerns = flagsAll.filter((f) => !(f.cls === "ide_ai" && editorMode === "allowed"));
   const visible = visibleFlags(flagsAll, t);
-  const cells = cellsFor(windows, threshold, nowIdx, onScrub);
+  const cells = cellsFor(windows, nowIdx, onScrub);
+  const files = filesFor(followupCreated);
   const markers = markersFor(flagsAll, t, (sec, flagId) => {
     onScrub(sec);
     const f = flagsAll.find((x) => x.id === flagId);
@@ -78,21 +80,40 @@ export default function LiveRoom({
         </div>
 
         <div style={{ padding: 16, borderBottom: "2px solid var(--color-divider)" }}>
-          <div className="eyebrow" style={{ marginBottom: 8 }}>Current window · 30 s</div>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 14 }}>
-            <span className="flag-tag" style={{ fontSize: 14, padding: "4px 10px", background: clsTagBg(w.cls), color: clsInk(w.cls) }}>
-              {w.cls}
-            </span>
-            <span className="mono" style={{ fontSize: 34, lineHeight: 1, fontWeight: 400 }}>{w.conf.toFixed(2)}</span>
-            <span style={{ fontSize: 12, color: "color-mix(in srgb, var(--color-text) 60%, transparent)", paddingBottom: 4 }}>
-              confidence · threshold {threshold.toFixed(2)}
+          <div style={{ display: "flex", alignItems: "baseline", marginBottom: 10 }}>
+            <span className="eyebrow">Files</span>
+            <span className="mono" style={{ marginLeft: "auto", fontSize: 10, color: "color-mix(in srgb, var(--color-text) 50%, transparent)" }}>
+              candidate workspace
             </span>
           </div>
-          <div style={{ fontSize: 13, marginTop: 10, color: "color-mix(in srgb, var(--color-text) 75%, transparent)" }}>
-            {w.conf >= threshold
-              ? "Above your threshold. A flag has been written for this window with the evidence behind it."
-              : "Nothing unusual in this window. Rhythm and correction rate are consistent with unaided typing."}
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {files.map((file) => (
+              <div
+                key={file.key}
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 10,
+                  padding: "8px 12px",
+                  borderLeft: `3px solid ${file.isNew ? "var(--color-accent)" : "transparent"}`,
+                  background: "color-mix(in srgb, var(--color-text) 4%, transparent)",
+                }}
+              >
+                <span className="mono" style={{ fontSize: 12.5 }}>{file.name}</span>
+                {file.isNew && (
+                  <span className="flag-tag" style={{ background: "var(--color-accent)", color: "#f8f4f4" }}>new</span>
+                )}
+                <span style={{ marginLeft: "auto", fontSize: 11.5, color: "color-mix(in srgb, var(--color-text) 60%, transparent)" }}>
+                  {file.detail}
+                </span>
+              </div>
+            ))}
           </div>
+          {!followupCreated && (
+            <div className="mono" style={{ marginTop: 10, fontSize: 11, color: "color-mix(in srgb, var(--color-text) 50%, transparent)" }}>
+              followup1.py appears once a flag is sent to the candidate
+            </div>
+          )}
         </div>
 
         <div style={{ padding: 16, borderBottom: "2px solid var(--color-divider)" }}>
@@ -168,7 +189,7 @@ export default function LiveRoom({
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             {visible.map((f) => {
-              const info = flagRowInfo(f, { editorMode, falsePos, dismissed, probeSentFor });
+              const info = flagRowInfo(f, { editorMode, falsePos, dismissed, probeSentFor, followupCreated });
               return (
                 <button
                   key={f.id}
