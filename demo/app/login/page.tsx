@@ -18,7 +18,7 @@ export default function LoginPage() {
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--color-bg)", color: "var(--color-text)", padding: 24 }}>
       <div style={{ width: "min(680px, 100%)" }}>
         <div style={{ textAlign: "center", marginBottom: 44 }}>
-          <span style={{ fontFamily: "var(--font-heading)", fontWeight: 800, fontSize: 28, letterSpacing: "-0.02em" }}>IntegrAI</span>
+          <span style={{ fontFamily: "var(--font-heading)", fontWeight: 800, fontSize: 28, letterSpacing: "-0.02em" }}>CodeTrace</span>
           <div className="mono" style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "color-mix(in srgb, var(--color-text) 55%, transparent)", marginTop: 8 }}>
             integrity for technical interviews
           </div>

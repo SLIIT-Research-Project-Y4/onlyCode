@@ -134,7 +134,7 @@ export default function IntegrityReport({
           <div style={{ marginTop: 22, border: "2px solid var(--color-text)", padding: 16 }}>
             <div style={{ fontFamily: "var(--font-heading)", fontWeight: 800, fontSize: 17 }}>The hiring decision is yours</div>
             <div style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.5, color: "color-mix(in srgb, var(--color-text) 72%, transparent)" }}>
-              IntegrAI does not pass or fail anyone. It records behaviour and shows evidence. Record your decision below.
+              CodeTrace does not pass or fail anyone. It records behaviour and shows evidence. Record your decision below.
             </div>
             <textarea
               className="input"

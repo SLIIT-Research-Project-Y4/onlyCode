@@ -1,10 +1,10 @@
 import type { Role } from "./types";
 
-const SESSION_KEY = "integrai-demo-session";
+const SESSION_KEY = "codetrace-demo-session";
 
 export const DEMO_ACCOUNTS: Record<Role, { name: string; email: string; password: string }> = {
-  interviewer: { name: "Priya Nakamura", email: "interviewer@integrai.dev", password: "demo1234" },
-  candidate: { name: "Alex Rivera", email: "candidate@integrai.dev", password: "demo1234" },
+  interviewer: { name: "Priya Nakamura", email: "interviewer@codetrace.dev", password: "demo1234" },
+  candidate: { name: "Alex Rivera", email: "candidate@codetrace.dev", password: "demo1234" },
 };
 
 // sessionStorage, not localStorage: interviewer and candidate are meant to be

@@ -14,7 +14,7 @@ export default function Home() {
 
   return (
     <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--color-bg)", color: "var(--color-text)" }}>
-      <span style={{ fontFamily: "var(--font-heading)", fontWeight: 800, fontSize: 20 }}>IntegrAI</span>
+      <span style={{ fontFamily: "var(--font-heading)", fontWeight: 800, fontSize: 20 }}>CodeTrace</span>
     </div>
   );
 }

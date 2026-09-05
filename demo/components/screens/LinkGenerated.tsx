@@ -30,7 +30,7 @@ export default function LinkGenerated({
           <div className="eyebrow" style={{ marginBottom: 8 }}>Join link</div>
           <div style={{ display: "flex", alignItems: "stretch", gap: 0, border: "2px solid var(--color-text)" }}>
             <div className="mono" style={{ flex: 1, padding: "14px 16px", fontSize: 19, overflow: "auto", whiteSpace: "nowrap" }}>
-              integrai.app/join/8F2K-QM4X-7RTP
+              codetrace.app/join/8F2K-QM4X-7RTP
             </div>
             <button className="btn btn-primary" style={{ borderRadius: 0, paddingInline: 20 }} onClick={onCopy}>
               {copied ? "Copied" : "Copy"}

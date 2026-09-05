@@ -1,6 +1,6 @@
-# IntegrAI prototype demo
+# CodeTrace prototype demo
 
-A frontend-only mockup of IntegrAI, the interview-integrity platform this
+A frontend-only mockup of CodeTrace, the interview-integrity platform this
 project is building. There is no backend and no database — every value
 (sessions, flags, confidence scores, timelines) is mock data in
 `lib/data.ts`, and all interaction is local React state.

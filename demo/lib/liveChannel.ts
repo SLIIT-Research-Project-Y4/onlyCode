@@ -4,7 +4,7 @@ export type LiveMessage =
   | { type: "probe-sent"; flagId: number }
   | { type: "followup-created"; question: string };
 
-const CHANNEL_NAME = "integrai-demo";
+const CHANNEL_NAME = "codetrace-demo";
 
 export function publishLive(msg: LiveMessage) {
   if (typeof window === "undefined" || !("BroadcastChannel" in window)) return;

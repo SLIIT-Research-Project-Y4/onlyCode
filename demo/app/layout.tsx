@@ -9,8 +9,8 @@ const archivo = Archivo({
 });
 
 export const metadata: Metadata = {
-  title: "IntegrAI — integrity for technical interviews",
-  description: "Prototype demo of the IntegrAI interview-integrity platform.",
+  title: "CodeTrace — integrity for technical interviews",
+  description: "Prototype demo of the CodeTrace interview-integrity platform.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
