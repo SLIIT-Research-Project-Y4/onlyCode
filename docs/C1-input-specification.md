@@ -15,7 +15,7 @@
 | ❓ | Open. Do not build on this yet. |
 | ⏸️ | Parked deliberately. Not a gap. |
 
-**Scope.** Complete. All input streams are specified: keystrokes (§1–§8), edits (§9), environment (§10), clock synchronisation (§11), session metadata (§12), code (§13), plus the C1/C2 boundary (§14–§15) and data lifecycle (§16).
+**Scope.** Complete. All input streams are specified: keystrokes (§1–§8), edits (§9), environment (§10), code execution (§11), clock synchronisation (§12), session metadata (§13), code (§14), plus the C1/C2 boundary (§15–§16) and data lifecycle (§17).
 
 ---
 
@@ -28,9 +28,11 @@
 | Table | Columns |
 |---|---|
 | `events` — all kinds | `session_id`, `task_id`, `load_seq`, `batch_seq`, `perf_now`, `kind` |
-| `events` — keystroke (0, 1) | `key_class`, `key_code`, `modifiers`, `is_repeat` |
+| `events` — keystroke (0, 1) | `key_class`, `key_code`, `modifiers`, `is_repeat`, `is_trusted` |
 | `events` — edit (2) | `origin`, `version_id`, `change_index`, `start_line`, `start_col`, `end_line`, `end_col`, `range_offset`, `inserted_len`, `inserted_lines`, `removed_len`, `doc_len`, `inserted_text` (pastes only) |
 | `events` — environment (3–7) | `env_state`, `viewport_w`, `viewport_h` |
+| `events` — run (8, 9) | `run_id`, `exit_status`, `browser_duration_ms`, `sandbox_time_ms`, `sandbox_memory_kb` |
+| `events` — clipboard, session, display (10–14) | `copied_len`, `source_pane`, `start_line`/`end_line` of the copied range, `env_state` |
 | `task_submissions` | `code_text`, `version_id`, `submitted_at` |
 | `clock_sync_samples` | `t0`–`t3`, `rtt_ms`, `offset_ms`, `accepted` |
 
@@ -51,12 +53,13 @@ Everything below is derived in the extractor, so the degradation experiments can
 | **flight** → `mean_flight_ms`, `std_flight_ms` | `gap_ms` between consecutive keydowns |
 | `keystroke_count`, `backspace_rate`, `is_repeat_rate`, `unmatched_keyup_rate`, `burst_len` | Keystroke rows (§8) |
 | `edit_count`, `paste_ratio`, `inserted_len_sum`/`_max`, `removed_len_sum`, `undo_count`, `redo_count`, `min_line`, `max_line`, `pause_ms` | Edit rows (§9.6) |
+| `run_count`, `runs_before_first_success`, `time_to_first_run`, `edits_between_runs`, `run_error_rate` | Run rows (§11.3) |
 | per-digraph latencies | `key_code` pairs — research only (§5) |
-| the flagged code segment | Rebasing a line range through edit arithmetic (§13.1) |
+| the flagged code segment | Rebasing a line range through edit arithmetic (§14.1) |
 
 ### 4. Deliberately never captured
 
-`key_char` (which character was typed) · text typed and then deleted · `keyboard_layout` · a `dwell_ms` column · screen, camera, microphone, other tabs or applications · clipboard content never pasted into the editor. See §17.
+`key_char` (which character was typed) · text typed and then deleted · `keyboard_layout` · a `dwell_ms` column · screen, camera, microphone, other tabs or applications · clipboard content never pasted into the editor. See §18.
 
 ---
 
@@ -115,7 +118,7 @@ One row per physical key transition.
 | `batch_seq` | BIGINT | ✅ | Which delivery batch this event arrived in. Resets to 0 when `load_seq` increments. Not required for deduplication (§6 handles that) — kept for tracing transport problems back to specific events. |
 | `time` | TIMESTAMPTZ | ✅ | Server-aligned wall clock. Partition key. |
 | `perf_now` | DOUBLE | ✅ | Raw `performance.now()`. Never adjusted. |
-| `kind` | SMALLINT | ✅ | `0` keydown, `1` keyup. (`2` edit, `3`–`7` environment — see §9 and §10.) |
+| `kind` | SMALLINT | ✅ | `0`–`1` keystroke. (`2` edit §9 · `3`–`7` environment §10 · `8`–`9` run §11 · `10`–`14` clipboard, session and display §10.1.) |
 | `gap_ms` | DOUBLE | ✅ | Milliseconds since the previous *typing* event (kinds 0–2 only), computed at ingest within `(session_id, load_seq, task_id)`. Environment events must not fracture a pause; a task boundary **does** reset it (§3.4). |
 
 ### 3.2 Keystroke-specific columns
@@ -128,6 +131,7 @@ One row per physical key transition.
 | `key_code` | TEXT | ✅ | `event.code` — the physical key. Stored in every session; all capture is consented. See §5. |
 | `modifiers` | SMALLINT | ✅ | Bitmask of modifiers *held* during this event: `1` ctrl, `2` alt, `4` shift, `8` meta. Distinct from a modifier key being pressed on its own, which is `key_class = 9`. |
 | `is_repeat` | BOOLEAN | ✅ | `event.repeat`. Auto-repeat from a held key. See §7.2. |
+| `is_trusted` | BOOLEAN | ✅ | `event.isTrusted`. `true` for a keypress the browser generated from real user input; `false` for one a script synthesised with `dispatchEvent()`. See §7.7. |
 
 **There is deliberately no `dwell_ms` column.** Dwell is derived in the extractor by pairing keydown to keyup — see §7.3 for why storing it would break the degradation experiments.
 
@@ -346,11 +350,52 @@ Out of scope: the project targets English input with Python only. Under an IME, 
 
 ### 7.6 Timer resolution ⚠️ Must be measured
 
-> **In plain terms —** browsers deliberately blur their own clocks to stop websites using precise timing to spy on people. We need to find out how blurred, on each browser we support. Our measurements live in the tens of milliseconds; if a browser rounds to the nearest 2 ms, the fine detail that distinguishes one person's typing from another's is already gone before we see it.
+> **In plain terms —** the browser's clock is deliberately less accurate than it could be, and we need to find out how much, on every browser we support.
 
-`performance.now()` is deliberately coarsened by browsers, variably by browser, version, and cross-origin-isolation state. Dwell and flight operate in tens of milliseconds; if a target browser clamps to 2 ms, the fine structure that distinguishes one person's rhythm from another's is gone.
+**Why browsers do this.** A very precise clock is a security hole: a malicious page can use tiny timing differences to work out what is in your CPU cache or which sites you have visited. So browsers round the clock off on purpose.
 
-**Do not assume a number.** Build a framework-free HTML page that measures actual resolution on every target browser and OS before any real data collection. This determines whether the signal survives at all on a given browser.
+**The analogy.** A stopwatch that only shows whole seconds. Time something that takes 1.4 seconds and it reads "1". The detail is not hidden — it was never recorded.
+
+**Concretely**, if a browser rounds to the nearest 2 ms, every reading becomes a multiple of 2:
+
+```
+Real:      100.3 ms      101.7 ms      102.4 ms
+Recorded:  100 ms        102 ms        102 ms
+```
+
+Two genuinely different moments collapse into the same number.
+
+**Why this is serious here.** A key is held for roughly 60–130 ms, and the gap between *two different people* might be 10–20 ms. That gap is the entire signal. If the clock rounds coarsely enough it disappears into the rounding, and no analysis recovers it, because the detail never arrived.
+
+Resolution varies by browser, by version, and by privacy settings — Firefox's anti-fingerprinting mode rounds far more aggressively than its default.
+
+**Do not assume a number. Measure it.** The probe is about fifteen lines: read the clock in a tight loop and find the smallest gap between two *different* readings.
+
+```js
+let prev = performance.now();
+const gaps = [];
+for (let i = 0; i < 100000; i++) {
+  const now = performance.now();
+  if (now !== prev) { gaps.push(now - prev); prev = now; }
+}
+console.log("resolution:", Math.min(...gaps), "ms");
+```
+
+Run it on every target browser and OS **before any real data collection**. That single number decides whether the approach works at all on a given browser.
+
+### 7.7 Synthesised keystrokes ✅
+
+> **In plain terms —** the browser tells us whether each keypress came from a real finger or from a script pretending to be one. It is one boolean we get for free, and it closes off the easiest way to fake typing.
+
+`event.isTrusted` is `true` only for events the browser generated from genuine user input. Anything a page script creates with `dispatchEvent()` is `false`.
+
+**What it catches:** software auto-typing — a script in the page replaying an AI's answer at plausible human speed.
+
+**What it does not catch:** a hardware key injector, or OS-level automation, because those enter through the real input stack and the browser cannot tell them from fingers.
+
+⚠️ **This narrows a stated limitation rather than removing it.** §14.3 currently says behavioural detection cannot survive *"a human or script typing an AI's answer at realistic speed."* With `is_trusted` the honest claim becomes **"a human, or a hardware device"** — a script alone no longer suffices. Restate the limitation in those terms; do not drop it.
+
+Derived feature: `untrusted_key_rate`. In an honest session it is zero, so any non-zero value is worth surfacing on its own rather than waiting for a classifier to weigh it.
 
 ## 8. Derived keystroke features
 
@@ -371,12 +416,56 @@ What the extractor produces per window. Window = **30 s wide, emitted every 10 s
 
 **Why 30 s.** At ~2–4 keystrokes/second a 1-second window holds 2–4 keystrokes, and `std_dwell_ms` over 3 samples is noise. 30 s holds roughly 60–120 while actively typing, which is in the band prior work uses (Morales & Fierrez: 100 digraphs; TypeNet: ~250 keystrokes for stability). The 10-second step recovers flag latency without shrinking the sample, mirroring the overlap used by Mehta et al. (1000-keystroke windows, 300 step).
 
-**How the window is built.** TimescaleDB continuous aggregates are *tumbling* buckets — they do not overlap — so a sliding 30 s window is not directly expressible as one. Build it in two layers:
+### How the window is built
 
-- a **10 s tumbling continuous aggregate** as the base, and
-- a **view combining three consecutive buckets** into each 30 s window.
+**What we want** — a 30-second window that moves forward every 10 seconds, so consecutive windows overlap:
 
-For this to work the base aggregate must store `sum(x)`, `sum(x²)` and `count` for anything needing a standard deviation, rather than storing `std` directly — sums combine across buckets, standard deviations do not. `max(gap_ms)` is fine because maxima combine; an average of averages is not.
+```
+Window 1:  0s ────────── 30s
+Window 2:      10s ────────── 40s
+Window 3:          20s ────────── 50s
+```
+
+**What TimescaleDB offers** — *continuous aggregates*, summaries it maintains automatically as data arrives, so old data is never recalculated. But they only produce **non-overlapping** buckets, side by side:
+
+```
+[ 0–10s ][ 10–20s ][ 20–30s ][ 30–40s ]
+```
+
+So the overlapping windows cannot be requested directly.
+
+**The trick** — have it compute 10-second buckets, then add them up three at a time:
+
+```
+Window  0–30s = bucket(0–10) + bucket(10–20) + bucket(20–30)
+Window 10–40s =                bucket(10–20) + bucket(20–30) + bucket(30–40)
+```
+
+Each bucket is reused by three windows. That is where the overlap comes from — assembled out of non-overlapping pieces.
+
+**The catch — only store values that add up.** To combine three buckets, what is stored has to be addable:
+
+| | Combines across buckets? |
+|---|---|
+| Counts — 12 + 15 + 9 = 36 keystrokes | ✅ |
+| Maximums — the largest of the three | ✅ |
+| **Averages** | ❌ |
+| **Standard deviations** | ❌ |
+
+Averaging three averages gives the wrong answer unless all three buckets hold the same number of events. So do not store the average — store its ingredients:
+
+```
+per 10 s bucket:   sum of values,  sum of squared values,  count
+```
+
+Then for the 30-second window:
+
+```
+mean = (sum₁ + sum₂ + sum₃) / (n₁ + n₂ + n₃)
+std  = √( total_sum_sq / total_n  −  mean² )
+```
+
+Both come out exact, and the database still does the incremental work.
 
 **Build only this window for now.** v3 §10-E proposed three aggregates (100 ms / 1 s / 10 s) and the MVP plan proposed four. Neither is needed yet: the window-size sweep is a single experiment run near the end, and raw per-event storage means any size can be computed then without recollecting anything.
 
@@ -395,14 +484,15 @@ For this to work the base aggregate must store `sum(x)`, `sum(x²)` and `count` 
 | Field | Notes |
 |---|---|
 | `origin` | Why the change happened — §9.2 |
-| `version_id` | Monaco's model version. The anchor for line rebasing (§13.1) |
+| `version_id` | Monaco's model version. The anchor for line rebasing (§14.1) |
 | `change_index` | Position within a multi-change event — §9.3 |
 | `start_line`, `start_col`, `end_line`, `end_col` | The range that was **replaced** — §9.3 |
 | `range_offset` | Character offset of the change within the document |
 | `inserted_len`, `inserted_lines` | What went in. Both are needed — §9.3 |
 | `removed_len` | What came out |
 | `doc_len` | Document length after this change — §9.5 |
-| `inserted_text` | Pastes only — §13.2 |
+| `inserted_text` | Pastes only — §14.2 |
+| `paste_origin` | Pastes only. `internal` if the clipboard was last filled by a copy or cut inside this editor, `external` otherwise, `unknown` if it cannot be determined — §10.1 |
 
 ### 9.2 `origin` values ✅
 
@@ -435,9 +525,9 @@ Paste 30 lines at line 5:
    range = line 5 col 3 → line 5 col 3,  text = "...30 lines..."
 ```
 
-Both ranges are a single point, because in neither case was anything replaced. The range alone therefore cannot distinguish one keystroke from a thirty-line paste. **`inserted_lines` must be counted from the inserted text and stored** — without it, every line number below a paste is wrong, and the line rebasing in §13.1 silently produces garbage.
+Both ranges are a single point, because in neither case was anything replaced. The range alone therefore cannot distinguish one keystroke from a thirty-line paste. **`inserted_lines` must be counted from the inserted text and stored** — without it, every line number below a paste is wrong, and the line rebasing in §14.1 silently produces garbage.
 
-**Changes-array ordering is unverified.** Monaco is *expected* to return changes in descending offset order, so they can be applied in sequence without invalidating the positions of later ones. Confirm this before relying on it for reconstruction — §13.1 depends on applying changes in the correct order.
+**Changes-array ordering is unverified.** Monaco is *expected* to return changes in descending offset order, so they can be applied in sequence without invalidating the positions of later ones. Confirm this before relying on it for reconstruction — §14.1 depends on applying changes in the correct order.
 
 **Your own code fires the same event.** Loading a starter template produces a content change indistinguishable from the candidate typing it. See §9.4.
 
@@ -447,7 +537,7 @@ Programmatic changes are **recorded, with `origin = reset`, and excluded from fe
 
 Both halves matter:
 
-- **Record them**, because §13.1 replays edits to work out where lines moved. If the starter template load is missing, the replay begins from a document containing content that was never recorded, and every subsequent line calculation is wrong.
+- **Record them**, because §14.1 replays edits to work out where lines moved. If the starter template load is missing, the replay begins from a document containing content that was never recorded, and every subsequent line calculation is wrong.
 - **Exclude them from features**, because a template load is a large insertion with zero keystrokes behind it — the `external_ai` signature exactly. Without this the system flags its own setup code as cheating, on every session.
 
 This is the same pattern as excluding the inter-task waiting gap (§3.4): the event exists so reconstruction works, but never reaches the classifier.
@@ -473,7 +563,7 @@ Use an explicit suppression flag around your own edits, and `isFlush` to catch w
 | `inserted_len_sum`, `inserted_len_max` | Sum and maximum of `inserted_len` |
 | `removed_len_sum` | Sum of `removed_len` |
 | `undo_count`, `redo_count` | `origin = undo` / `redo` |
-| `min_line`, `max_line` | Lowest and highest line touched — §14.2 |
+| `min_line`, `max_line` | Lowest and highest line touched — §15.2 |
 | `pause_ms` | `max(gap_ms)` in the window. `gap_ms` spans kinds 0–2, so a pause is measured across both typing and edits |
 
 ⚠️ **`origin = reset` is excluded from every feature above** (§9.4). Including it would count your own template load as a large keystroke-free insertion — the `external_ai` signature.
@@ -502,7 +592,114 @@ Derived features: `blur_count`, `focus_count`, `visibility_change_count`, and a 
 
 **Interpretation boundary, to state in the paper.** Blur says focus left the window, never where it went. Blur *with* a visibility change means a tab switch; blur *without* one means another window on the same screen. Neither, nor the pair, can see a second physical device or a phone. State this as a boundary, not a bug.
 
-## 11. Clock synchronisation ✅
+### 10.1 Clipboard and session events ✅
+
+> **In plain terms —** we already record text arriving by paste. These record text *leaving* the editor, and the session ending or the network dropping. Copying code out is the likeliest first move of someone about to paste it into an AI tool, and until now it was invisible to us.
+
+| `kind` | Event | Source |
+|---|---|---|
+| 10 | copy | `document.addEventListener('copy')` |
+| 11 | cut | `document.addEventListener('cut')` |
+| 12 | page hide | `pagehide` / `visibilitychange` to hidden at unload |
+| 13 | network state change | `window.online` / `offline`, carried in `env_state` |
+| 14 | display connected or disconnected | Polled `screen.isExtended` — §13.1 |
+
+**Copy and cut carry `source_pane`**, derived from the event target: `editor` · `problem_statement` · `output` · `other`. The listener is on `document`, so a copy from the problem statement is *already* captured — this field records which region it came from.
+
+⚠️ **Copying the problem statement is the strongest signal in this group.** Copying your own code to move it is ordinary; copying the *question* is the clearest indication it is about to be pasted somewhere else. Codility treats the same event as one of its primary signals — but it **blocks** the copy. We do not: blocking would remove the behaviour we are trying to observe (§10, *recorded, never blocked*).
+
+**Copy is the important one.** The `external_ai` sequence usually starts with the candidate copying the problem statement or their partial solution *out* of the editor. We record the **length** of what was copied and where it came from — never the text itself, since that is the candidate's own work leaving, not evidence arriving.
+
+Derived features: `copy_count`, `copy_len_sum`, `problem_copy_count`, and `copy_before_blur` — a copy immediately followed by focus leaving the window is a much stronger signal than either alone.
+
+**Page hide** distinguishes a session that was submitted from one that was abandoned or closed, which matters when deciding whether an incomplete session belongs in the dataset.
+
+**Network state** explains a gap in the data instead of leaving it ambiguous. Without it, a two-minute offline period is indistinguishable from a two-minute pause.
+
+## 11. Code execution and run events ✅
+
+> **In plain terms —** the candidate can run their code and see the output, like any real coding interview. We record when they ran it and whether it worked. This matters twice over: how often someone runs and fixes their code says a lot about whether they wrote it, and a run *explains* a pause that would otherwise look suspicious.
+
+### 11.1 Why this is C1's concern ✅
+
+**Research validity.** A coding interview where you cannot test your code is not a coding interview. People type differently when nothing can be verified — more cautiously, with less experimentation. If the environment is artificial, the behaviour captured is not the behaviour being claimed, and the pilot data is compromised before it is collected.
+
+**Run events are predictive, and prior work proves it.** Edwards et al.'s corpus stores execute success/failure and execution output as first-class events, and a large body of computing-education research is built on compile/run granularity — Jadud's Error Quotient, the Watwin and RED scores, "number of attempts" and "success rate" as outcome predictors.
+
+**The pause problem, for the fourth time.** A candidate runs their code, waits, reads the output, then types a fix. Without run events that is a pause with no typing — indistinguishable from consulting an external tool. A test suite taking 10–20 seconds manufactures the `external_ai` signature outright. This is the same failure as the probe-generation wait (§3.4), the reload gap (§12) and the template load (§9.4): **capturing the event is what makes the pause explainable.**
+
+### 11.2 Event kinds and columns ✅
+
+| `kind` | Event |
+|---|---|
+| 8 | `run_started` |
+| 9 | `run_finished` |
+
+| Field | Notes |
+|---|---|
+| `run_id` | Correlates a start with its finish |
+| `exit_status` | `ok` \| `error` \| `timeout` — on `run_finished` only |
+| `browser_duration_ms` | Click to result arriving, measured in the browser |
+| `sandbox_time_ms` | Actual execution time reported by the sandbox |
+| `sandbox_memory_kb` | Peak memory reported by the sandbox |
+
+**Two durations, deliberately.** The difference between them is queue wait plus network time. That matters because a slow queue creates a pause the candidate did not cause, and without both numbers there is no way to separate it from thinking.
+
+⚠️ **Run events do not reset `gap_ms`** — unlike a task boundary (§3.4). The candidate can still type while code runs, so the elapsed time is real. Give C2 the run counts in the window instead and let it learn that a pause accompanied by a run is benign.
+
+### 11.3 Derived run features ✅
+
+| Feature | Definition |
+|---|---|
+| `run_count` | Runs started in the window |
+| `runs_before_first_success` | Runs until the first `exit_status = ok` |
+| `time_to_first_run` | Seconds from task start to the first run |
+| `edits_between_runs` | Mean edit count between consecutive runs |
+| `run_error_rate` | Fraction of runs ending in `error` or `timeout` |
+
+**`runs_before_first_success` is the one to watch.** Someone who wrote the code themselves runs it, it fails, they fix it, they run again. Someone who pasted working AI code runs it once and it passes. None of C2's four current anomaly types (§15.3) captures that, and it is close to free.
+
+### 11.4 Execution architecture ✅
+
+Python is interpreted, so there is no compile step — the problem is not *running* code but **running untrusted code safely**. A candidate can write an infinite loop, a fork bomb, a filesystem read, or a network call that fetches the answer at runtime.
+
+**Use a self-hosted sandbox service — Judge0, shared with C3.** C3 needs one anyway for grading probe answers, and one service serves both callers: C1 asks "run this and give me the output", C3 asks "run this against these test cases".
+
+```
+Browser [Run]
+    │   never calls the sandbox directly
+    ▼
+FastAPI backend  ──►  records run_started / run_finished
+    │
+    ▼
+Judge0 (self-hosted, network disabled)
+    │
+    ▼
+result ──► back to the candidate
+```
+
+⚠️ **The browser must never call the sandbox directly.** It would expose the execution service to whatever the candidate's browser sends, and — the reason specific to C1 — **it would bypass telemetry entirely.** Runs would happen with no record, and every one of them would become an unexplained pause.
+
+**Limits:**
+
+```
+wall_time_limit    ~5 s        infinite loops
+cpu_time_limit     ~2 s
+memory_limit       ~128 MB
+max_processes      ~30         fork bombs
+enable_network     false       ← the important one
+filesystem         read-only; nothing persists between runs
+```
+
+`enable_network: false` matters more here than in an ordinary judge: with network access a candidate's "solution" could call an LLM API at runtime.
+
+**Self-host it; do not use the hosted API.** Judge0 offers a hosted service, but candidate source code would leave your infrastructure and go to a third party — contradicting every data-handling decision in §5 and §17, and requiring its own declaration in the ethics submission. Self-hosting is a `docker-compose` service alongside TimescaleDB.
+
+⚠️ **Verify before committing:** Judge0's sandbox needs specific cgroup configuration on the host, and **cgroup v2 on newer kernels is the known friction point**. Timebox a setup spike before this enters the plan. Fallback if it fights back: a minimal Docker-per-run runner (`--network none --read-only --memory=128m --pids-limit=30 --cpus=1` plus a hard timeout) — workable, but Judge0's value is that those decisions are already made and tested.
+
+**Ownership.** C3 owns the sandbox service, since they need it regardless. C1 owns the proxy endpoint and the telemetry recorded around it.
+
+## 12. Clock synchronisation ✅
 
 > **In plain terms —** the browser's stopwatch and the server's clock don't agree. We measure the difference by bouncing timestamped messages back and forth, then use that difference to convert every browser timestamp into a real wall-clock time.
 
@@ -526,11 +723,9 @@ clock_sync_samples
 
 ⚠️ **The reload reconciliation is specified but not built, and is the highest-risk silent bug in C1.** `performance.now()` restarts near zero on page reload, so an offset computed before a reload is meaningless after it. Required behaviour: re-run the handshake on **every** reconnect, and compute `gap_ms` and apply offsets **only within one `load_seq` segment** (§2). The column exists; nothing reads it correctly yet. Roughly twenty lines.
 
-**How the failure manifests**, which matters because it produces no error: events after a reload get stamped with times near the session's *start*. Anything older than the continuous aggregate's look-back window is then silently dropped from every feature vector — no exception, no warning, just missing rows. It lands hardest on candidates who switch away and return, which is precisely the `external_ai` pattern the project exists to detect.
-
 **How the failure actually manifests**, which is worth knowing because it produces no error: `performance.now()` restarts near zero on reload, so events after a reload are stamped with times near the session's *start*. Anything older than the continuous aggregate's look-back window is then silently dropped from every feature vector — no exception, no warning, just missing rows. It lands hardest on candidates who switch away and return, which is precisely the `external_ai` pattern the project exists to detect.
 
-## 12. Session metadata ✅
+## 13. Session metadata ✅
 
 > **In plain terms —** one row per interview, holding who it was, what machine they used, and a few flags about how well the capture went.
 
@@ -547,13 +742,30 @@ sessions
   editor_profile, editor_config_hash
   ime_detected                  -- §7.5
   dropped_event_count, degraded -- §6.2
+  multi_screen                  -- §13.1
 ```
+
+### 13.1 Multiple monitors ✅
+
+`screen.isExtended` returns `true` when the desktop spans more than one display. It is **synchronous and requires no permission prompt**, unlike `getScreenDetails()`, which asks the user and would change the character of the capture entirely.
+
+**Checked repeatedly, not once.** Read `screen.isExtended` at session start into `sessions.multi_screen`, then **poll roughly every 5 seconds** and emit a `kind = 14` event whenever the answer changes. Also check on every `resize` and `focus` event, since connecting a display usually triggers one — that catches the change faster than the timer alone.
+
+It is a cheap synchronous property read, so polling costs effectively nothing. Do **not** use `getScreenDetails()` to get change notifications: it shows a permission prompt and would change the character of the capture entirely.
+
+**Why a change matters more than the initial state.** A second display present from the start might be a dual-monitor desk. One appearing ten minutes into an interview is a deliberate act during the assessment. Only the event distinguishes them.
+
+For context: HackerRank flags monitors connected mid-test. Codility, with far more engineering budget, does not attempt detection at all — it simply *instructs* candidates to close the second screen.
+
+⚠️ **Chromium only.** Firefox and Safari do not implement it, and a `window-management` Permissions-Policy can force it to `false`. So the honest reading is: `true` means a second display is definitely present; `false` means *either* one display *or* a browser that cannot tell us. Store it as three-valued — true / false / unknown — and never treat `false` as evidence of a single screen.
+
+**Why it earns its place.** Blur tells you focus left but never where it went. A blur on a machine with a second display attached is a materially different signal from the same blur on a single-screen laptop. It is one boolean, needs no permission, and is the closest a browser can honestly get to the "second screen" question — which is otherwise the largest blind spot in the whole approach (§18).
 
 **`editor_profile` / `editor_config_hash` earn their place**: they let the team prove that `ide_ai` can only occur under the suggestions-enabled profile, and that the configuration used to collect training data matched the one used at inference. A mismatch shifts feature distributions and breaks the classifier silently.
 
 **No `keyboard_layout`** — QWERTY is assumed and stated as a limitation (§3.3).
 
-**Ground truth lives on the task, not the session.** C2 scores per task (§14), and a participant is instructed per task, so:
+**Ground truth lives on the task, not the session.** C2 scores per task (§15), and a participant is instructed per task, so:
 
 ```
 tasks.condition   -- 'no_ai' | 'ide_ai' | 'external_ai', what the participant was told to do
@@ -563,13 +775,13 @@ No per-window label table is needed, because nothing is classified per window.
 
 *Privacy note:* `user_agent` together with screen dimensions and `device_pixel_ratio` approaches a device fingerprint. Since `candidate_id` already links sessions by design for the re-identification study, this adds no new risk — but it is worth knowing it is redundant with an already-accepted trade-off rather than a fresh one.
 
-## 13. Code capture ✅
+## 14. Code capture ✅
 
 > **In plain terms —** C1 keeps two things: the code the candidate submitted, once per task, and the text of anything they pasted. Nothing else — no periodic snapshots of work in progress, and no record of text they typed and then deleted. The flagged snippet C3 asks for is normally cut out of the submitted file on demand, using arithmetic to work out where those lines ended up.
 
 **What C3 needs:** the flagged code segment and the full submitted solution.
 
-Normally the segment is derived from the submission (§13.1). Paste text is stored as well, because a paste is flagged the moment it happens and a candidate may delete it before submitting — leaving C3 a flag pointing at code that no longer exists, and nothing to build a question from (§13.2).
+Normally the segment is derived from the submission (§14.1). Paste text is stored as well, because a paste is flagged the moment it happens and a candidate may delete it before submitting — leaving C3 a flag pointing at code that no longer exists, and nothing to build a question from (§14.2).
 
 **What C1 stores:**
 
@@ -588,7 +800,7 @@ One row per task. The original problem and each probe answer are separate submis
 
 v3 §7.2's reactive AST extraction is **dropped**. C3 parses code itself with `ast`/tree-sitter and computes call-graph centrality and entry-function detection, both of which need the whole file. C1 extracting a fragment would duplicate C3's parsing while withholding what C3 actually needs.
 
-### 13.1 Deriving the flagged segment ✅
+### 14.1 Deriving the flagged segment ✅
 
 > **In plain terms —** a flag points at line numbers, but line numbers shift as the candidate keeps typing above them. Before that range means anything you have to work out where those lines ended up in the submitted file. You can do that with arithmetic from the edit records — no stored text needed.
 
@@ -606,7 +818,7 @@ Move line *L* from version V to the submitted version by adding the net delta of
 
 If *L* falls inside a span that was removed, return **"this region was deleted"** explicitly. Never silently remap it onto whatever code now occupies those line numbers — that would hand C3 an innocent function and invite a question about code the candidate never wrote.
 
-### 13.2 Pasted content ✅
+### 14.2 Pasted content ✅
 
 > **In plain terms —** when someone pastes into the editor, we store what they pasted. This is the one piece of text C1 keeps that the candidate did not deliberately hand in, and it is kept because a pasted block is exactly what a follow-up question gets built from — and it may be gone from the file by the time anyone looks.
 
@@ -622,13 +834,15 @@ If *L* falls inside a span that was removed, return **"this region was deleted"*
 
 **Optional privacy refinement, worth considering later:** once classification has run, the text of pastes that were never flagged could be deleted, keeping only lengths. That reduces the stored surface to the pastes that are actually used. Do not build it now — it would complicate the C2 synthetic-data work, which benefits from realistic paste content.
 
-### 13.3 Stated limitations ✅
+### 14.3 Stated limitations ✅
 
 **Typed-then-deleted text is not recoverable, deliberately.** C1 records that characters were deleted, and how many, but never what they were. This is where private content concentrates — Edwards et al. report that 58% of typed characters are eventually deleted, and their manual review found student names present only in the deleted stream. Not capturing it is a decision, not a gap.
 
-**Behavioural detection cannot survive a human or script typing an AI's answer at realistic speed.** No missing keystrokes, plausible timing, nothing resembling a paste. The literature quantifies this: a forged-keystroke attack pushes a gradient-boosting detector's false-rejection rate **past 93%**. This is not a C1 gap to fix; it is a limitation to state in the paper before an examiner states it for you.
+**Behavioural detection cannot survive a human — or a hardware device — typing an AI's answer at realistic speed.** No missing keystrokes, plausible timing, nothing resembling a paste. The literature quantifies this: a forged-keystroke attack pushes a gradient-boosting detector's false-rejection rate **past 93%**. This is not a C1 gap to fix; it is a limitation to state in the paper before an examiner states it for you.
 
-## 14. Feature vectors and the C1/C2 boundary ✅
+⚠️ **State the boundary precisely.** `is_trusted` (§7.7) removes the *software* half of this attack — a script replaying timings inside the page is caught. What survives is a person retyping, or a hardware key injector feeding the real input stack. Published evasion figures should be read with this distinction in mind: they do not all specify how the forgery was delivered.
+
+## 15. Feature vectors and the C1/C2 boundary ✅
 
 > **In plain terms —** every 10 seconds C1 boils the last 30 seconds of typing down to a row of numbers. Those rows are saved. C1 stops there: it never decides that anything is suspicious. C2 reads the rows after the candidate submits, and it alone decides what counts as a flag.
 
@@ -656,7 +870,7 @@ Keyed naturally by `(session_id, task_id, window_start, run_id)` — no surrogat
 
 **The threshold is C2's, and lives in the model.** C2 sets the confidence threshold that turns a score into a flag; C1 neither stores nor applies it. It must live *inside the model artifact* rather than in editable config, so it cannot change without producing a new `model_version` — otherwise `model_version` stops being a reliable record of what was actually applied, and an old report can no longer be reproduced.
 
-### 14.1 Degraded copies stay out of `events` ✅
+### 15.1 Degraded copies stay out of `events` ✅
 
 > **In plain terms —** the degradation experiment makes damaged copies of a real session. Those copies are never written to the events table. They are built in memory, run through the same extractor, and only the resulting feature vectors are saved.
 
@@ -666,7 +880,7 @@ Writing damaged copies into `events` would multiply the table by (failure modes 
 
 Instead: read a clean session into Pandas, damage it in memory, run it through the same extractor, and persist only the resulting rows with their `run_id`. The comparison the study needs — clean feature vectors against damaged ones — works identically, and baseline contamination becomes structurally impossible rather than something to remember.
 
-### 14.2 Code range per window ✅
+### 15.2 Code range per window ✅
 
 A flag has to tell C3 *which code* to ask about. Only one of C2's anomaly types carries that naturally:
 
@@ -677,9 +891,9 @@ A flag has to tell C3 *which code* to ask about. Only one of C2's anomaly types 
 | Absence of typing errors | No |
 | Uniform keystroke intervals (manual copying) | No |
 
-So each window also carries **`min_line` and `max_line`** — the lowest and highest line touched by edits inside it. Any flag then carries a code range rather than only a timestamp, and §13.1's rebasing maps it onto the submitted file.
+So each window also carries **`min_line` and `max_line`** — the lowest and highest line touched by edits inside it. Any flag then carries a code range rather than only a timestamp, and §14.1's rebasing maps it onto the submitted file.
 
-### 14.3 Anomaly coverage ✅
+### 15.3 Anomaly coverage ✅
 
 C2's four anomaly types are all computable from features already specified — no additional capture is required:
 
@@ -690,7 +904,7 @@ C2's four anomaly types are all computable from features already specified — n
 | Uniform intervals — copying by hand from another screen | **low** `std_flight_ms`; human typing is irregular, transcription is metronomic |
 | Copy-paste | `origin = pasted`, `inserted_len`, `paste_ratio` |
 
-## 15. One feature registry ✅
+## 16. One feature registry ✅
 
 > **In plain terms —** every fact about a feature lives in one file: its name, its type, its valid range, the plain-English label the dashboard shows, and how to display it. C2 and C4 read that file rather than keeping their own copies.
 
@@ -717,7 +931,7 @@ C2 supplies the `actionable` values, since actionability is a modelling judgemen
 
 This one blocks C2 and C4 rather than C1, so it should land before they start building against features.
 
-## 16. Retention and data lifecycle ✅
+## 17. Retention and data lifecycle ✅
 
 > **In plain terms —** keep everything until the project is finished, then delete the raw data. Do not set the database to delete things automatically while the research is still running.
 
@@ -738,15 +952,15 @@ This one blocks C2 and C4 rather than C1, so it should land before they start bu
 
 **A deidentified published dataset is a separate artifact** with no deletion date — that is what deidentification is for (§5).
 
-## 17. What C1 never captures ✅
+## 18. What C1 never captures ✅
 
 > **In plain terms —** the hard boundaries, written down so an examiner finds them stated rather than discovering them missing.
 
-Screen contents, camera, microphone, other tabs or applications, clipboard content that was never pasted into the editor, anything outside the browser tab, keystrokes outside the editor, and the text of anything the candidate typed and then deleted (§13.3).
+Screen contents, camera, microphone, other tabs or applications, clipboard content that was never pasted into the editor, anything outside the browser tab, keystrokes outside the editor, and the text of anything the candidate typed and then deleted (§14.3).
 
 **Webcam / eye tracking / head pose:** ⏸️ parked. See `C1-eye-tracking-feasibility.md`. Not a gap — a deliberate decision, currently on hold.
 
-## 18. Remaining gates ✅
+## 19. Remaining gates ✅
 
 > **In plain terms —** every design question is now decided. What is left are things to *do* before collecting real data, not things to decide.
 
@@ -754,13 +968,15 @@ All twelve open decisions are closed. Three gates remain before data collection 
 
 | Gate | Why it blocks collection |
 |---|---|
-| **Ethics submission covering paste content** | `inserted_text` is the most sensitive store in C1 (§13.2). Collecting it without approval makes the whole corpus unusable. |
+| **Ethics submission covering paste content** | `inserted_text` is the most sensitive store in C1 (§14.2). Collecting it without approval makes the whole corpus unusable. |
 | **Timer-resolution probe** (§7.6) | If a target browser coarsens `performance.now()` too heavily, dwell and flight carry no signal there. Better learned before recruiting than after. |
-| **Consent wording matched to capture** | Must state that source code, pasted content and keystroke timing are recorded, and for how long (§16). Cannot be asked retrospectively. |
+| **Consent wording matched to capture** | Must state that source code, pasted content and keystroke timing are recorded, and for how long (§17). Cannot be asked retrospectively. |
+| **Ethics submission to cover code execution** | Candidate code is executed in an isolated sandbox with no network access and nothing retained (§11.4). Small, but it must be declared rather than discovered. |
+| **Judge0 setup spike** (§11.4) | cgroup v2 configuration is the known friction point. Timebox it before it enters the plan; the Docker-per-run fallback exists if it resists. |
 
 Neither of the first two blocks development — build against this spec now.
 
-## 19. Decisions register
+## 20. Decisions register
 
 > **In plain terms —** every decision taken while finalising these inputs, and where each one is written up.
 
@@ -769,33 +985,40 @@ Neither of the first two blocks development — build against this spec now.
 | 1 | Key identity | One capture path. `key_code` + `key_class` in every session, all capture consented. `key_char` hashing dropped — it protected nothing against a ~100-symbol alphabet. | §3.2, §4, §5 |
 | 2 | Tasks | `task_id` on every event; `tasks` table modelling the probe tree. Candidate answers strictly one task at a time. `gap_ms` resets at task boundaries. | §3.4 |
 | 3 | Reliable delivery | Batch-level `batch_seq` with cumulative acks, a client retry queue with backoff and a bounded cap, and an `ingested_batches` ledger for idempotent writes. | §6 |
-| 4 | Code capture | The submitted file per task, plus `inserted_text` for pastes. No periodic snapshots, no typed-then-deleted text, no `flagged_segments` table. | §13 |
+| 4 | Code capture | The submitted file per task, plus `inserted_text` for pastes. No periodic snapshots, no typed-then-deleted text, no `flagged_segments` table. | §14 |
 | 5 | Keyboard layout | Dropped. QWERTY assumed and stated as a limitation. | §3.3 |
 | 6 | Windows | Build one: 30 s wide, 10 s step, from a 10 s tumbling aggregate plus a combining view. Other sizes deferred to the sweep. | §8 |
-| 7 | C1/C2 boundary | C1 stores feature vectors for its own studies and emits no flags or scores. C2 decides flags and scores per task at submission. | §14 |
+| 7 | C1/C2 boundary | C1 stores feature vectors for its own studies and emits no flags or scores. C2 decides flags and scores per task at submission. | §15 |
 | 8 | Finding G | Closed. The 1 s vs 30 s mismatch no longer exists; v3's display-rollup fix deleted with it. | §8 |
-| 9 | Degraded copies | Degradation runs in memory. `events` records only what actually happened. | §14.1 |
-| 10 | Feature registry | One data file in `shared_features/` holding every fact about a feature. C2 and C4 import it. | §15 |
-| 11 | Threshold | Lives inside the model artifact, so `model_version` alone records what was applied. | §14 |
-| 12 | Retention | No automatic deletion during the project. Consent states twelve months. | §16 |
+| 9 | Degraded copies | Degradation runs in memory. `events` records only what actually happened. | §15.1 |
+| 10 | Feature registry | One data file in `shared_features/` holding every fact about a feature. C2 and C4 import it. | §16 |
+| 11 | Threshold | Lives inside the model artifact, so `model_version` alone records what was applied. | §15 |
+| 12 | Retention | No automatic deletion during the project. Consent states twelve months. | §17 |
 | 13 | Edit `origin` | Six values; `autocomplete_accepted` defined but not implemented until the suggestions-enabled profile exists. | §9.2 |
 | 14 | Programmatic edits | Recorded as `origin = reset`, excluded from every feature. | §9.4 |
 | 15 | `doc_len` | Stored per edit as an integrity check that catches lost events anywhere, not just in transport. | §9.5 |
-| — | Eye / head tracking | **Parked.** See `C1-eye-tracking-feasibility.md`: the accuracy gap is 10–25×, it fails when the head turns away, and a CV pipeline would inject jitter into the timing measurements C1 exists to make. | §17 |
+| 16 | Code execution | The candidate can run their code. Run events captured as kinds 8–9 with two durations; execution via a self-hosted Judge0 sandbox shared with C3, proxied through C1's backend so runs cannot happen untelemetered. Network disabled in the sandbox. | §11 |
+| 17 | Closing capture gaps | Added clipboard events (copy, cut — length and position only, never the text), page-hide to separate abandoned from submitted sessions, network state change so an outage is not mistaken for a pause, and `multi_screen`. | §10.1, §13.1 |
+| 18 | Capture-completeness audit | Audited against HackerRank, Codility, CoderPad, CodeSignal, TestGorilla and Fabric. One new event (`kind 14`, display connected or disconnected, polled) and three fields on existing events: `source_pane`, `paste_origin`, `is_trusted`. Excluded IP address, DevTools detection, mouse movement and focus micro-flickers, each with a reason. | §7.7, §10.1, §13.1 |
+| — | Eye / head tracking | **Parked.** See `C1-eye-tracking-feasibility.md`: the accuracy gap is 10–25×, it fails when the head turns away, and a CV pipeline would inject jitter into the timing measurements C1 exists to make. | §18 |
 
-## 20. Changelog
+## 21. Changelog
 
 | Date | Change |
 |---|---|
 | 2026-09-05 | First issue. Keystroke capture finalised: capture surface, timestamping, event record, `key_class`, capture profiles, `client_seq`, correctness rules, derived features. Dropped `key_char` hashing and `keyboard_layout`. Window set to 30 s sliding / 10 s step. Eye tracking parked. |
 | 2026-09-05 | Added plain-language summary to every section. |
+| 2026-09-13 | **Decision 18 — capture-completeness audit against commercial platforms.** One new event kind: `14`, a display connected or disconnected mid-session, from polled `screen.isExtended` (every ~5 s, plus on `resize`/`focus`). Three new fields on events already captured: `source_pane` on copy/cut so a copy of the *problem statement* is distinguishable from one inside the editor; `paste_origin` so an internal cut-and-reposition is not mistaken for an external paste; and `is_trusted` on keystrokes, which narrows the forged-typing limitation from "any script or device" to "a hardware device only". Audited against HackerRank, Codility, CoderPad, CodeSignal, TestGorilla and Fabric — see `C1-platform-comparison.md`. Deliberately excluded: IP address, DevTools detection, mouse movement, and sub-100 ms focus micro-flickers. |
+| 2026-09-13 | **Decision 17 — closing capture gaps.** Added clipboard events (copy, cut — length and position only, never the text), page-hide to separate abandoned sessions from submitted ones, and network state change so an offline period is not mistaken for a pause. Added `multi_screen` from `screen.isExtended` — permission-free, Chromium-only, stored three-valued because `false` may mean "cannot tell". `copy_before_blur` added as a derived feature: copying out and then leaving the window is the opening move of the `external_ai` pattern. |
+| 2026-09-06 | **Decision 16 — code execution.** Added §11: run events (kinds 8–9), five derived run features including `runs_before_first_success`, and the execution architecture — self-hosted Judge0 shared with C3, network disabled, proxied through C1's backend so no run escapes telemetry. Recorded why in-browser execution is rejected (main-thread jitter) and why the hosted API is rejected (candidate code leaving the infrastructure). Sections 11–20 renumbered to 12–21. Also removed a duplicated paragraph in the clock-synchronisation section. |
+| 2026-09-06 | Rewrote §7.6 (timer resolution) and §8's window construction in plain language, with a worked rounding example, the fifteen-line probe script, and a diagram of how overlapping windows are assembled from non-overlapping buckets. |
 | 2026-09-06 | **Foundational release.** Sections 10–12 written in full (environment events, clock synchronisation, session metadata), so v3 is fully superseded and archived. Added a stored-vs-calculated quick reference and a decisions register. Ground truth placed on `tasks.condition`; no per-window label table needed now that scoring is per task. |
-| 2026-09-06 | Absorbed the two facts that existed only in `C1_Inputs_Finalized.docx`: the reload bug's silent-drop mechanism (§11) and the 93% false-rejection figure for forged-keystroke attacks (§13.3). That document is now fully superseded. |
+| 2026-09-06 | Absorbed the two facts that existed only in `C1_Inputs_Finalized.docx`: the reload bug's silent-drop mechanism (§12) and the 93% false-rejection figure for forged-keystroke attacks (§14.3). That document is now fully superseded. |
 | 2026-09-06 | Consistency pass: removed a stale `dwell_ms` reference in §7.1; added §9.6 listing derived edit features, which were previously specified nowhere. |
 | 2026-09-06 | **Decisions 13–15 — edit events.** Full §9: columns, six `origin` values (`autocomplete_accepted` reserved), the four Monaco traps, programmatic edits recorded as `reset` but excluded from features, and `doc_len` as an integrity check. Sections renumbered with stubs added for environment, clock-sync and session metadata so future work needs no further renumbering. |
 | 2026-09-06 | **Decision 12 — retention.** No automatic retention policy during the project; the brief's 90-day auto-delete is rejected as it would destroy data mid-study. Raw events and paste text kept until the degradation study completes, then deleted manually; feature vectors may outlive them. Consent to state twelve months. |
 | 2026-09-06 | **Decision 11 — threshold.** No extra columns. C2 sets the threshold and it lives inside the model artifact, so `model_version` alone records what was applied. `background_ref` left to C4. |
-| 2026-09-06 | Restructured: feature vectors, the feature registry and retention promoted to top-level sections (§10–§12); open-decision list replaced by remaining process gates. |
+| 2026-09-06 | Restructured: feature vectors, the feature registry and retention promoted to top-level sections (§10–§13); open-decision list replaced by remaining process gates. |
 | 2026-09-06 | **Decision 10 — one feature registry.** All feature metadata consolidated into a single data file in `shared_features/`: name, dtype, unit, range, plain-English label, description, display unit, actionability. C2 and C4 import it instead of maintaining their own lists. |
 | 2026-09-06 | **Decision 9 — degraded copies.** Degradation happens in memory (Pandas), never in `events`. Only the resulting feature vectors are persisted, separated by `run_id`. Keeps the clean baseline uncontaminatable by construction. |
 | 2026-09-06 | **Decision 8 — Finding G closed.** The 1 s vs 30 s window mismatch is resolved by construction: C2 scores per task, windows are 30 s. v3's display-rollup fix is deleted, along with the undefined SHAP-combination step it implied. |
